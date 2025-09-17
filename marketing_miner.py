@@ -1,5 +1,8 @@
 from typing import Any, Optional, Dict
 import os
+import json
+import base64
+from urllib.parse import parse_qs
 try:
     from dotenv import load_dotenv  # type: ignore
     load_dotenv()
@@ -216,11 +219,45 @@ if __name__ == "__main__":
         try:
             from starlette.applications import Starlette  # type: ignore
             from starlette.routing import Mount  # type: ignore
-            asgi_app = Starlette(routes=[
-                Mount("/mcp", app=sse_app),
-                Mount("/", app=sse_app),
-                Mount("/sse", app=sse_app),
-            ])
+            from starlette.middleware import Middleware  # type: ignore
+
+            class SmitheryConfigMiddleware:
+                def __init__(self, app):
+                    self.app = app
+
+                async def __call__(self, scope, receive, send):
+                    try:
+                        if scope.get("type") == "http":
+                            path = scope.get("path", "")
+                            if path.startswith("/mcp") or path == "/":
+                                qs = scope.get("query_string", b"").decode("utf-8", "ignore")
+                                params = parse_qs(qs)
+                                cfg_values = params.get("config", [])
+                                for cfg in cfg_values:
+                                    try:
+                                        # Base64 URL-safe s paddingem
+                                        padded = cfg + "=="
+                                        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
+                                        for key, value in payload.items():
+                                            if value is not None:
+                                                os.environ[str(key)] = str(value)
+                                    except Exception:
+                                        pass
+                                # Přímé query parametry mají přednost
+                                for key in ("MM_API_TOKEN", "HOST", "PORT", "TRANSPORT"):
+                                    if key in params and params[key]:
+                                        os.environ[key] = params[key][0]
+                    finally:
+                        return await self.app(scope, receive, send)
+
+            asgi_app = Starlette(
+                routes=[
+                    Mount("/mcp", app=sse_app),
+                    Mount("/", app=sse_app),
+                    Mount("/sse", app=sse_app),
+                ],
+                middleware=[Middleware(SmitheryConfigMiddleware)],
+            )
         except Exception:
             asgi_app = sse_app
         import uvicorn  # type: ignore
