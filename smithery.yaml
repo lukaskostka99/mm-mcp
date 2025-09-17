@@ -4,6 +4,12 @@ build:
 
 startCommand:
   type: http
+  # Health check je klíčový pro robustní nasazení.
+  # Smithery počká, až tento endpoint vrátí 200 OK.
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 15
+    periodSeconds: 30
   configSchema:
     type: object
     required: [MM_API_TOKEN]

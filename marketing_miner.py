@@ -1,50 +1,27 @@
 from typing import Any, Optional, Dict
 import os
-import json
-import base64
-from urllib.parse import parse_qs
-try:
-    from dotenv import load_dotenv  # type: ignore
-    load_dotenv()
-except Exception:
-    pass
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-# --- Konfigurace serveru ---
-# Smithery poskytuje port v proměnné SMITHERY_PORT nebo PORT
-PORT_STR = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
 try:
-    PORT = int(PORT_STR)
-except (ValueError, TypeError):
-    PORT = 8081
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
 
-# Vždy nasloucháme na 0.0.0.0 uvnitř kontejneru
-HOST = "0.0.0.0"
-
-print(f"Initializing Marketing Miner MCP for {HOST}:{PORT}")
-
-# Inicializace FastMCP serveru s hostem a portem.
-# Toto je správný způsob, jak nastavit host/port, ne přes run().
-mcp = FastMCP("marketing-miner", host=HOST, port=PORT)
-
+# Inicializace FastMCP serveru. Host/Port se nastaví až při spuštění Uvicornu.
+mcp = FastMCP("marketing-miner")
 
 # --- Konstanty a API ---
 API_BASE = "https://profilers-api.marketingminer.com"
-# API token je načítán z proměnné prostředí MM_API_TOKEN (kvůli bezpečnému nasazení na Smithery)
-API_TOKEN = os.getenv("MM_API_TOKEN")
-
-# Typy suggestions
 SUGGESTIONS_TYPES = ["questions", "new", "trending"]
-
-# Dostupné jazyky
 LANGUAGES = ["cs", "sk", "pl", "hu", "ro", "gb", "us"]
 
 async def make_mm_request(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Provede požadavek na Marketing Miner API s patřičným ošetřením chyb"""
-    # Znovu načteme token z env, protože mohl být nastaven za běhu
-    current_api_token = os.getenv("MM_API_TOKEN")
-    if not current_api_token:
+    api_token = os.getenv("MM_API_TOKEN")
+    if not api_token:
+        print("ERROR: MM_API_TOKEN is not set!")
         return {
             "status": "error",
             "message": "Chybí konfigurace API tokenu. Nastavte proměnnou prostředí MM_API_TOKEN."
@@ -52,13 +29,14 @@ async def make_mm_request(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
         
     async with httpx.AsyncClient() as client:
         try:
-            params["api_token"] = current_api_token
-            
+            params["api_token"] = api_token
             response = await client.get(url, params=params, timeout=30.0)
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            return {"status": "error", "message": f"Chyba při volání Marketing Miner API: {str(e)}"}
+            error_message = f"Chyba při volání Marketing Miner API: {str(e)}"
+            print(f"ERROR: {error_message}")
+            return {"status": "error", "message": error_message}
 
 @mcp.tool()
 async def get_keyword_suggestions(
@@ -203,8 +181,60 @@ async def get_search_volume_data(
     return "Neočekávaný formát odpovědi z API"
 
 if __name__ == "__main__":
-    print(f"Starting Marketing Miner MCP server with SSE transport on {HOST}:{PORT}...")
+    # Smithery poskytuje port v proměnných SMITHERY_PORT nebo PORT.
+    port_str = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
+    try:
+        port = int(port_str)
+    except (ValueError, TypeError):
+        port = 8081
     
-    # Jednoduché a správné spuštění. 
-    # `mcp.run()` použije host a port nakonfigurovaný v konstruktoru.
-    mcp.run(transport="sse")
+    # V kontejneru vždy nasloucháme na 0.0.0.0
+    host = "0.0.0.0"
+
+    print(f"Preparing Marketing Miner MCP ASGI app for {host}:{port}")
+
+    # Získáme ASGI aplikaci z FastMCP
+    sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
+    if callable(sse_app_candidate):
+        sse_app = sse_app_candidate()
+    else:
+        sse_app = sse_app_candidate
+
+    if sse_app is None:
+        print("Fatal: Could not get ASGI app from FastMCP. Cannot start server.")
+    else:
+        try:
+            from starlette.applications import Starlette
+            from starlette.routing import Mount, Route
+            from starlette.responses import JSONResponse
+            from starlette.middleware import Middleware
+            from starlette.middleware.cors import CORSMiddleware
+            
+            async def health_check(request):
+                """Jednoduchý health check endpoint pro Smithery."""
+                return JSONResponse({"status": "ok"})
+
+            # Sestavení finální, robustní ASGI aplikace
+            asgi_app = Starlette(
+                routes=[
+                    Mount("/mcp", app=sse_app),
+                    Route("/health", endpoint=health_check, methods=["GET", "HEAD"]),
+                ],
+                middleware=[
+                    Middleware(
+                        CORSMiddleware,
+                        allow_origins=["*"],
+                        allow_methods=["GET", "POST", "OPTIONS"],
+                        allow_headers=["*"],
+                        allow_credentials=True,
+                        expose_headers=["mcp-session-id", "mcp-protocol-version"],
+                    ),
+                ],
+            )
+            
+            import uvicorn
+            print(f"Starting Uvicorn server on {host}:{port}")
+            uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+
+        except ImportError:
+            print("Fatal: Starlette or Uvicorn not found. Please check requirements.txt.")
