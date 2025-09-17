@@ -1,0 +1,35 @@
+build:
+  dockerfile: Dockerfile
+  dockerBuildPath: .
+
+startCommand:
+  type: http
+  configSchema:
+    type: object
+    required: [MM_API_TOKEN]
+    properties:
+      MM_API_TOKEN:
+        type: string
+        title: Marketing Miner API Token
+        description: Váš API token pro Marketing Miner API
+      HOST:
+        type: string
+        default: 0.0.0.0
+      PORT:
+        type: string
+        default: "8000"
+      TRANSPORT:
+        type: string
+        enum: [http, sse]
+        default: http
+  commandFunction: |-
+    (config) => ({
+      command: "python",
+      args: ["marketing_miner.py"],
+      env: {
+        MM_API_TOKEN: config.MM_API_TOKEN,
+        HOST: config.HOST || "0.0.0.0",
+        PORT: config.PORT || "8000",
+        TRANSPORT: config.TRANSPORT || "http",
+      },
+    })
