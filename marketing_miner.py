@@ -188,77 +188,82 @@ async def get_search_volume_data(
     return "Neočekávaný formát odpovědi z API"
 
 if __name__ == "__main__":
-    # Inicializace a spuštění serveru pro nasazení (výchozí HTTP pro Smithery)
     host = os.getenv("HOST", "0.0.0.0")
     port_str = os.getenv("PORT") or os.getenv("SMITHERY_PORT") or "8000"
     try:
         port = int(port_str)
-    except ValueError:
+    except (ValueError, TypeError):
         port = 8000
-    transport = os.getenv("TRANSPORT", "sse")
+    
+    print(f"Preparing Marketing Miner MCP on {host}:{port}")
 
-    print(f"Starting Marketing Miner MCP via {transport} on {host}:{port}")
-
-    # Spustíme přímo ASGI SSE aplikaci přes uvicorn, aby seděl host/port
     sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
-    # Pokud je to tovární metoda, zavoláme ji a získáme ASGI aplikaci
     if callable(sse_app_candidate):
         try:
-            sse_app = sse_app_candidate()  # type: ignore[misc]
+            sse_app = sse_app_candidate()
         except TypeError:
-            # Některé verze mohou vyžadovat argumenty; zkusíme bez a jinak padneme na stdio
             sse_app = None
     else:
         sse_app = sse_app_candidate
 
     if sse_app is None:
-        # Pokud by ASGI app nebyla dostupná, zkuste stdio jako poslední možnost
+        print("Running in STDIO fallback mode.")
         mcp.run(transport="stdio")
     else:
-        # Namapujeme SSE app i na kořenovou cestu '/', aby skenery nepřistály na 404
         try:
-            from starlette.applications import Starlette  # type: ignore
-            from starlette.routing import Mount  # type: ignore
-            from starlette.middleware import Middleware  # type: ignore
+            from starlette.applications import Starlette
+            from starlette.routing import Mount
+            from starlette.middleware import Middleware
+            from starlette.middleware.cors import CORSMiddleware
 
             class SmitheryConfigMiddleware:
                 def __init__(self, app):
                     self.app = app
 
                 async def __call__(self, scope, receive, send):
-                    try:
-                        if scope.get("type") == "http":
-                            path = scope.get("path", "")
-                            if path.startswith("/mcp") or path == "/":
-                                qs = scope.get("query_string", b"").decode("utf-8", "ignore")
-                                params = parse_qs(qs)
-                                cfg_values = params.get("config", [])
-                                for cfg in cfg_values:
-                                    try:
-                                        # Base64 URL-safe s paddingem
-                                        padded = cfg + "=="
-                                        payload = json.loads(base64.urlsafe_b64decode(padded).decode("utf-8"))
-                                        for key, value in payload.items():
-                                            if value is not None:
-                                                os.environ[str(key)] = str(value)
-                                    except Exception:
-                                        pass
-                                # Přímé query parametry mají přednost
-                                for key in ("MM_API_TOKEN", "HOST", "PORT", "TRANSPORT"):
-                                    if key in params and params[key]:
-                                        os.environ[key] = params[key][0]
-                    finally:
-                        return await self.app(scope, receive, send)
+                    if scope["type"] == "http":
+                        qs = scope.get("query_string", b"").decode()
+                        params = parse_qs(qs)
+                        config_b64 = params.get("config", [None])[0]
+                        
+                        if config_b64:
+                            try:
+                                # Správné ošetření paddingu pro base64
+                                missing_padding = len(config_b64) % 4
+                                if missing_padding:
+                                    config_b64 += '=' * (4 - missing_padding)
+                                decoded_config = base64.urlsafe_b64decode(config_b64).decode()
+                                config_data = json.loads(decoded_config)
+                                if config_data.get("MM_API_TOKEN"):
+                                    os.environ["MM_API_TOKEN"] = config_data["MM_API_TOKEN"]
+                                    # Aktualizujeme globální proměnnou
+                                    globals()["API_TOKEN"] = config_data["MM_API_TOKEN"]
+                            except Exception as e:
+                                print(f"Error decoding config: {e}")
+                    
+                    await self.app(scope, receive, send)
 
+            # Sestavení ASGI aplikace s CORS a konfiguračním middlewarem
             asgi_app = Starlette(
                 routes=[
                     Mount("/mcp", app=sse_app),
-                    Mount("/", app=sse_app),
-                    Mount("/sse", app=sse_app),
+                    Mount("/", app=sse_app), 
                 ],
-                middleware=[Middleware(SmitheryConfigMiddleware)],
+                middleware=[
+                    Middleware(SmitheryConfigMiddleware),
+                    Middleware(
+                        CORSMiddleware,
+                        allow_origins=["*"],
+                        allow_methods=["GET", "POST", "OPTIONS"],
+                        allow_headers=["*"],
+                    ),
+                ],
             )
-        except Exception:
-            asgi_app = sse_app
-        import uvicorn  # type: ignore
-        uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+            
+            import uvicorn
+            print(f"Starting Uvicorn server on {host}:{port}")
+            uvicorn.run(asgi_app, host=host, port=port, log_level="info")
+
+        except ImportError:
+            print("Starlette or Uvicorn not found. Running in STDIO fallback mode.")
+            mcp.run(transport="stdio")

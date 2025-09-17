@@ -6,6 +6,7 @@ startCommand:
   type: http
   configSchema:
     type: object
+    required: [MM_API_TOKEN]
     properties:
       MM_API_TOKEN:
         type: string
@@ -17,6 +18,10 @@ startCommand:
       PORT:
         type: string
         default: "8000"
+      TRANSPORT:
+        type: string
+        enum: [http, sse]
+        default: sse
   commandFunction: |-
     (config) => ({
       command: "python",
