@@ -21,15 +21,15 @@ startCommand:
       TRANSPORT:
         type: string
         enum: [http, sse]
-        default: http
+        default: sse
   commandFunction: |-
     (config) => ({
       command: "python",
       args: ["marketing_miner.py"],
       env: {
         MM_API_TOKEN: config.MM_API_TOKEN,
-        HOST: config.HOST || "0.0.0.0",
-        PORT: config.PORT || "8000",
-        TRANSPORT: config.TRANSPORT || "http",
+        HOST: config.HOST,
+        PORT: config.PORT,
+        TRANSPORT: config.TRANSPORT || "sse",
       },
     })
