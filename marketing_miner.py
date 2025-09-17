@@ -194,6 +194,6 @@ if __name__ == "__main__":
         port = 8000
     transport = os.getenv("TRANSPORT", "sse")
 
-    print(f"Starting Marketing Miner MCP on {host}:{port} via {transport}")
+    print(f"Starting Marketing Miner MCP via {transport}")
 
-    mcp.run(transport=transport, host=host, port=port)
+    mcp.run(transport=transport)
