@@ -196,12 +196,11 @@ if __name__ == "__main__":
 
     print(f"Starting Marketing Miner MCP via {transport} on {host}:{port}")
 
-    try:
-        mcp.run(transport=transport)
-    except Exception:
-        # Fallback: spusť ASGI SSE app přes uvicorn s daným host/port
-        sse_app = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
-        if sse_app is None:
-            raise
+    # Spustíme přímo ASGI SSE aplikaci přes uvicorn, aby seděl host/port
+    sse_app = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
+    if sse_app is None:
+        # Pokud by ASGI app nebyla dostupná, zkuste stdio jako poslední možnost
+        mcp.run(transport="stdio")
+    else:
         import uvicorn  # type: ignore
         uvicorn.run(sse_app, host=host, port=port, log_level="info")
