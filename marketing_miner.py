@@ -203,59 +203,8 @@ async def get_search_volume_data(
     return "Neočekávaný formát odpovědi z API"
 
 if __name__ == "__main__":
-    port_str = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
-    try:
-        port = int(port_str)
-    except (ValueError, TypeError):
-        port = 8081
+    print(f"Starting Marketing Miner MCP server with SSE transport on {HOST}:{PORT}...")
     
-    host = "0.0.0.0"
-
-    print(f"Preparing Marketing Miner MCP on {host}:{port}")
-
-    sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
-    if callable(sse_app_candidate):
-        sse_app = sse_app_candidate()
-    else:
-        sse_app = sse_app_candidate
-
-    if sse_app is None:
-        print("Could not get ASGI app from FastMCP. Running in STDIO fallback mode.")
-        mcp.run(transport="stdio")
-    else:
-        try:
-            from starlette.applications import Starlette
-            from starlette.routing import Mount, Route
-            from starlette.responses import JSONResponse
-            from starlette.middleware import Middleware
-            from starlette.middleware.cors import CORSMiddleware
-            
-            async def health_check(request):
-                """Jednoduchý health check endpoint."""
-                return JSONResponse({"status": "ok"})
-
-            # Sestavení finální ASGI aplikace
-            asgi_app = Starlette(
-                routes=[
-                    Mount("/mcp", app=sse_app),
-                    Route("/health", endpoint=health_check)
-                ],
-                middleware=[
-                    Middleware(
-                        CORSMiddleware,
-                        allow_origins=["*"],
-                        allow_methods=["GET", "POST", "OPTIONS"],
-                        allow_headers=["*"],
-                        allow_credentials=True,
-                        expose_headers=["mcp-session-id", "mcp-protocol-version"],
-                    ),
-                ],
-            )
-            
-            import uvicorn
-            print(f"Starting Uvicorn server on {host}:{port}")
-            uvicorn.run(asgi_app, host=host, port=port, log_level="info")
-
-        except ImportError:
-            print("Starlette or Uvicorn not found. Running in STDIO fallback mode.")
-            mcp.run(transport="stdio")
+    # Jednoduché a správné spuštění. 
+    # `mcp.run()` použije host a port nakonfigurovaný v konstruktoru.
+    mcp.run(transport="sse")
