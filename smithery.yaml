@@ -3,7 +3,7 @@ build:
   dockerBuildPath: .
 
 startCommand:
-  type: stdio
+  type: http
   configSchema:
     type: object
     required: [MM_API_TOKEN]
@@ -18,6 +18,6 @@ startCommand:
       args: ["marketing_miner.py"],
       env: {
         MM_API_TOKEN: config.MM_API_TOKEN,
-        TRANSPORT: "stdio",
+        TRANSPORT: "http",
       },
     })
