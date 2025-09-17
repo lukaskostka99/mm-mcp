@@ -202,5 +202,15 @@ if __name__ == "__main__":
         # Pokud by ASGI app nebyla dostupná, zkuste stdio jako poslední možnost
         mcp.run(transport="stdio")
     else:
+        # Namapujeme SSE app i na kořenovou cestu '/', aby skenery nepřistály na 404
+        try:
+            from starlette.applications import Starlette  # type: ignore
+            from starlette.routing import Mount  # type: ignore
+            asgi_app = Starlette(routes=[
+                Mount("/", app=sse_app),
+                Mount("/sse", app=sse_app),
+            ])
+        except Exception:
+            asgi_app = sse_app
         import uvicorn  # type: ignore
-        uvicorn.run(sse_app, host=host, port=port, log_level="info")
+        uvicorn.run(asgi_app, host=host, port=port, log_level="info")
