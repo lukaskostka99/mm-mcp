@@ -197,7 +197,17 @@ if __name__ == "__main__":
     print(f"Starting Marketing Miner MCP via {transport} on {host}:{port}")
 
     # Spustíme přímo ASGI SSE aplikaci přes uvicorn, aby seděl host/port
-    sse_app = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
+    sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
+    # Pokud je to tovární metoda, zavoláme ji a získáme ASGI aplikaci
+    if callable(sse_app_candidate):
+        try:
+            sse_app = sse_app_candidate()  # type: ignore[misc]
+        except TypeError:
+            # Některé verze mohou vyžadovat argumenty; zkusíme bez a jinak padneme na stdio
+            sse_app = None
+    else:
+        sse_app = sse_app_candidate
+
     if sse_app is None:
         # Pokud by ASGI app nebyla dostupná, zkuste stdio jako poslední možnost
         mcp.run(transport="stdio")
@@ -207,6 +217,7 @@ if __name__ == "__main__":
             from starlette.applications import Starlette  # type: ignore
             from starlette.routing import Mount  # type: ignore
             asgi_app = Starlette(routes=[
+                Mount("/mcp", app=sse_app),
                 Mount("/", app=sse_app),
                 Mount("/sse", app=sse_app),
             ])
