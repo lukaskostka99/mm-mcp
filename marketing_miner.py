@@ -27,16 +27,17 @@ LANGUAGES = ["cs", "sk", "pl", "hu", "ro", "gb", "us"]
 
 async def make_mm_request(url: str, params: Dict[str, Any]) -> Dict[str, Any]:
     """Provede požadavek na Marketing Miner API s patřičným ošetřením chyb"""
+    # Znovu načteme token z env, protože mohl být nastaven za běhu
+    current_api_token = os.getenv("MM_API_TOKEN")
+    if not current_api_token:
+        return {
+            "status": "error",
+            "message": "Chybí konfigurace API tokenu. Nastavte proměnnou prostředí MM_API_TOKEN."
+        }
+        
     async with httpx.AsyncClient() as client:
         try:
-            # Ověříme přítomnost API tokenu v konfiguraci
-            if not API_TOKEN:
-                return {
-                    "status": "error",
-                    "message": "Chybí konfigurace API tokenu. Nastavte proměnnou prostředí MM_API_TOKEN."
-                }
-            # Přidáme API token do parametrů
-            params["api_token"] = API_TOKEN
+            params["api_token"] = current_api_token
             
             response = await client.get(url, params=params, timeout=30.0)
             response.raise_for_status()
@@ -188,26 +189,27 @@ async def get_search_volume_data(
     return "Neočekávaný formát odpovědi z API"
 
 if __name__ == "__main__":
-    host = os.getenv("HOST", "0.0.0.0")
-    port_str = os.getenv("PORT") or os.getenv("SMITHERY_PORT") or "8000"
+    # Smithery poskytuje port v proměnné SMITHERY_PORT nebo PORT
+    port_str = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
     try:
         port = int(port_str)
     except (ValueError, TypeError):
-        port = 8000
+        port = 8081
     
+    # Vždy nasloucháme na 0.0.0.0 uvnitř kontejneru
+    host = "0.0.0.0"
+
     print(f"Preparing Marketing Miner MCP on {host}:{port}")
 
+    # Získáme ASGI aplikaci z FastMCP
     sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
     if callable(sse_app_candidate):
-        try:
-            sse_app = sse_app_candidate()
-        except TypeError:
-            sse_app = None
+        sse_app = sse_app_candidate()
     else:
         sse_app = sse_app_candidate
 
     if sse_app is None:
-        print("Running in STDIO fallback mode.")
+        print("Could not get ASGI app from FastMCP. Running in STDIO fallback mode.")
         mcp.run(transport="stdio")
     else:
         try:
@@ -215,47 +217,21 @@ if __name__ == "__main__":
             from starlette.routing import Mount
             from starlette.middleware import Middleware
             from starlette.middleware.cors import CORSMiddleware
-
-            class SmitheryConfigMiddleware:
-                def __init__(self, app):
-                    self.app = app
-
-                async def __call__(self, scope, receive, send):
-                    if scope["type"] == "http":
-                        qs = scope.get("query_string", b"").decode()
-                        params = parse_qs(qs)
-                        config_b64 = params.get("config", [None])[0]
-                        
-                        if config_b64:
-                            try:
-                                # Správné ošetření paddingu pro base64
-                                missing_padding = len(config_b64) % 4
-                                if missing_padding:
-                                    config_b64 += '=' * (4 - missing_padding)
-                                decoded_config = base64.urlsafe_b64decode(config_b64).decode()
-                                config_data = json.loads(decoded_config)
-                                if config_data.get("MM_API_TOKEN"):
-                                    os.environ["MM_API_TOKEN"] = config_data["MM_API_TOKEN"]
-                                    # Aktualizujeme globální proměnnou
-                                    globals()["API_TOKEN"] = config_data["MM_API_TOKEN"]
-                            except Exception as e:
-                                print(f"Error decoding config: {e}")
-                    
-                    await self.app(scope, receive, send)
-
-            # Sestavení ASGI aplikace s CORS a konfiguračním middlewarem
+            
+            # Sestavení finální ASGI aplikace s CORS a SSE endpointem
             asgi_app = Starlette(
                 routes=[
                     Mount("/mcp", app=sse_app),
-                    Mount("/", app=sse_app), 
                 ],
                 middleware=[
-                    Middleware(SmitheryConfigMiddleware),
                     Middleware(
                         CORSMiddleware,
-                        allow_origins=["*"],
+                        allow_origins=["*"], # Povolí všechny domény
                         allow_methods=["GET", "POST", "OPTIONS"],
                         allow_headers=["*"],
+                        allow_credentials=True,
+                        # Hlavičky vyžadované MCP protokolem
+                        expose_headers=["mcp-session-id", "mcp-protocol-version"],
                     ),
                 ],
             )
