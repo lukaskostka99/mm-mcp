@@ -192,8 +192,16 @@ if __name__ == "__main__":
         port = int(port_str)
     except ValueError:
         port = 8000
-    transport = os.getenv("TRANSPORT", "http")
+    transport = os.getenv("TRANSPORT", "sse")
 
-    print(f"Starting Marketing Miner MCP via {transport}")
+    print(f"Starting Marketing Miner MCP via {transport} on {host}:{port}")
 
-    mcp.run(transport=transport)
+    try:
+        mcp.run(transport=transport)
+    except Exception:
+        # Fallback: spusť ASGI SSE app přes uvicorn s daným host/port
+        sse_app = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
+        if sse_app is None:
+            raise
+        import uvicorn  # type: ignore
+        uvicorn.run(sse_app, host=host, port=port, log_level="info")
