@@ -192,7 +192,7 @@ if __name__ == "__main__":
         port = int(port_str)
     except ValueError:
         port = 8000
-    transport = os.getenv("TRANSPORT", "sse")
+    transport = os.getenv("TRANSPORT", "stdio")
 
     print(f"Starting Marketing Miner MCP via {transport}")
 
