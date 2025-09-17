@@ -4,6 +4,11 @@ build:
 
 startCommand:
   type: http
+  # Přidání health checku, aby Smithery věděl, že server běží
+  healthCheck:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 30
   configSchema:
     type: object
     required: [MM_API_TOKEN]
