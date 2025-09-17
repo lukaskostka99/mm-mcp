@@ -11,10 +11,25 @@ except Exception:
 import httpx
 from mcp.server.fastmcp import FastMCP
 
-# Inicializace FastMCP serveru
-mcp = FastMCP("marketing-miner")
+# --- Konfigurace serveru ---
+# Smithery poskytuje port v proměnné SMITHERY_PORT nebo PORT
+PORT_STR = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
+try:
+    PORT = int(PORT_STR)
+except (ValueError, TypeError):
+    PORT = 8081
 
-# Konstanty a konfigurace
+# Vždy nasloucháme na 0.0.0.0 uvnitř kontejneru
+HOST = "0.0.0.0"
+
+print(f"Initializing Marketing Miner MCP for {HOST}:{PORT}")
+
+# Inicializace FastMCP serveru s hostem a portem.
+# Toto je správný způsob, jak nastavit host/port, ne přes run().
+mcp = FastMCP("marketing-miner", host=HOST, port=PORT)
+
+
+# --- Konstanty a API ---
 API_BASE = "https://profilers-api.marketingminer.com"
 # API token je načítán z proměnné prostředí MM_API_TOKEN (kvůli bezpečnému nasazení na Smithery)
 API_TOKEN = os.getenv("MM_API_TOKEN")
@@ -155,7 +170,6 @@ async def get_search_volume_data(
         if not data or len(data) == 0:
             return "Nebyla nalezena žádná data pro toto klíčové slovo."
         
-        # Vezmeme první výsledek (při GET requestu by měl být jen jeden)
         keyword_data = data[0]
         
         result = [
@@ -189,57 +203,8 @@ async def get_search_volume_data(
     return "Neočekávaný formát odpovědi z API"
 
 if __name__ == "__main__":
-    # Smithery poskytuje port v proměnné SMITHERY_PORT nebo PORT
-    port_str = os.getenv("SMITHERY_PORT") or os.getenv("PORT") or "8081"
-    try:
-        port = int(port_str)
-    except (ValueError, TypeError):
-        port = 8081
+    print(f"Starting Marketing Miner MCP server with SSE transport...")
     
-    # Vždy nasloucháme na 0.0.0.0 uvnitř kontejneru
-    host = "0.0.0.0"
-
-    print(f"Preparing Marketing Miner MCP on {host}:{port}")
-
-    # Získáme ASGI aplikaci z FastMCP
-    sse_app_candidate = getattr(mcp, "sse_app", None) or getattr(mcp, "app", None)
-    if callable(sse_app_candidate):
-        sse_app = sse_app_candidate()
-    else:
-        sse_app = sse_app_candidate
-
-    if sse_app is None:
-        print("Could not get ASGI app from FastMCP. Running in STDIO fallback mode.")
-        mcp.run(transport="stdio")
-    else:
-        try:
-            from starlette.applications import Starlette
-            from starlette.routing import Mount
-            from starlette.middleware import Middleware
-            from starlette.middleware.cors import CORSMiddleware
-            
-            # Sestavení finální ASGI aplikace s CORS a SSE endpointem
-            asgi_app = Starlette(
-                routes=[
-                    Mount("/mcp", app=sse_app),
-                ],
-                middleware=[
-                    Middleware(
-                        CORSMiddleware,
-                        allow_origins=["*"], # Povolí všechny domény
-                        allow_methods=["GET", "POST", "OPTIONS"],
-                        allow_headers=["*"],
-                        allow_credentials=True,
-                        # Hlavičky vyžadované MCP protokolem
-                        expose_headers=["mcp-session-id", "mcp-protocol-version"],
-                    ),
-                ],
-            )
-            
-            import uvicorn
-            print(f"Starting Uvicorn server on {host}:{port}")
-            uvicorn.run(asgi_app, host=host, port=port, log_level="info")
-
-        except ImportError:
-            print("Starlette or Uvicorn not found. Running in STDIO fallback mode.")
-            mcp.run(transport="stdio")
+    # Spustíme server. `mcp.run()` interně použije host a port 
+    # nakonfigurovaný při inicializaci `FastMCP`.
+    mcp.run(transport="sse")
